@@ -1,0 +1,5 @@
+include_rules
+
+
+: foreach main.c ipv4.c ipv6.c ip.c client.c |> !cc |> {objs}
+: {objs} |> !ld |> lappenchat$(PROGRAM_SUFFIX)

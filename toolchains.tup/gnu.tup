@@ -1,0 +1,14 @@
+ifdef CC
+	CC=@(CC)
+else
+	CC=gcc
+endif
+
+ifdef LIBS
+	LIBS=@(LIBS)
+else
+	LIBS=-lws2_32
+endif
+
+!cc = |> $(CC) -c @(CFLAGS) -o %o %f |> %B.o
+!ld = |> $(CC) @(LDFLAGS) -o %o %f $(LIBS) |>

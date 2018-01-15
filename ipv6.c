@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include "ip.h"
 
 
@@ -16,6 +17,6 @@ SOCKET connect_ipv6
 		.ai_socktype = SOCK_STREAM,
 		.ai_protocol = IPPROTO_TCP
 	};
-	
+
 	return connect_ip(argc, argv, hints);
 }

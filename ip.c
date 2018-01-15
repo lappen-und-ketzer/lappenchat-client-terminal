@@ -24,7 +24,7 @@ SOCKET connect_ip
 			SOCKET s = INVALID_SOCKET;
 			for ( ; result != NULL ; result = result->ai_next )
 			{
-				if ( (s = WSASocket(result->ai_family, result->ai_socktype, result->ai_protocol, NULL, 0, WSA_FLAG_OVERLAPPED)) != INVALID_SOCKET )
+				if ( (s = socket(result->ai_family, result->ai_socktype, result->ai_protocol)) != INVALID_SOCKET )
 				{
 					fputs("trying to connect... ", stdout);
 					if ( connect(s, result->ai_addr, result->ai_addrlen) != SOCKET_ERROR )

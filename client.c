@@ -5,147 +5,88 @@
 #include <winsock2.h>
 
 
+static int
+receive_all
+(
+ SOCKET sock,
+ char * buf,
+ int len
+)
+{
+	int received = 0;
+	int rv;
+	
+recv_again:
+	rv = recv(sock, buf, len, 0);
+	if ( rv != SOCKET_ERROR )
+	{
+		received += rv;
+		if ( received < len )
+			goto recv_again;
+		else
+			return 1;
+	}
+	else
+		return 0;
+}
+
 enum Phase {
-	phase_getting_nickname_length,
-	phase_getting_nickname,
-	phase_getting_message_length,
-	phase_getting_message
+	phase_get_nickname_length,
+	phase_get_nickname,
+	phase_get_message_length,
+	phase_get_message
 };
 
-typedef struct
-{
-	SOCKET socket;
-} ConnectionData;
-
-typedef struct
-{
-	WSAOVERLAPPED wsa_overlapped;
-	enum Phase phase;
-	unsigned char received;
-	unsigned char nickname_length;
-	char nickname[32];
-	unsigned char message_length;
-	char message[256];
-} OperationData;
-
 DWORD WINAPI
-worker_thread
+receive_thread
 (
  LPVOID data
 )
 {
-	HANDLE completion_port = (HANDLE)data;
-	DWORD flags = 0;
+	SOCKET sock = *(SOCKET *)data;
+	enum Phase phase = phase_get_nickname_length;
+	unsigned char nickname_length = 0;
+	char nickname[32];
+	unsigned char message_length = 0;
+	char message[256];
 	
 	for ( ; ; )
 	{
-		DWORD size;
-		ConnectionData * connection_data;
-		OperationData * operation_data;
-		if ( GetQueuedCompletionStatus(completion_port, &size, (PULONG_PTR)&connection_data, (LPOVERLAPPED *)&operation_data, INFINITE) )
+		switch ( phase )
 		{
-			if ( size )
-			{
-				switch ( operation_data->phase )
+			case phase_get_nickname_length:
+				if ( recv(sock, &nickname_length, 1, 0) )
 				{
-					case phase_getting_nickname_length:
-					{
-						//printf("nickname length: %i\n", operation_data->nickname_length);
-						
-						operation_data->phase = phase_getting_nickname;
-						
-						operation_data->received = 0;
-						
-						WSABUF buffer_info = {
-							.buf = operation_data->nickname,
-							.len = operation_data->nickname_length
-						};
-						WSARecv(connection_data->socket, &buffer_info, 1, NULL, &flags, &(operation_data->wsa_overlapped), NULL);
-						
-						break;
-					}
-					
-					case phase_getting_nickname:
-					{
-						operation_data->received += size;
-						
-						if ( operation_data->received == operation_data->nickname_length )
-						{
-							operation_data->phase = phase_getting_message_length;
-							
-							WSABUF buffer_info = {
-								.buf = &(operation_data->message_length),
-								.len = 1
-							};
-							WSARecv(connection_data->socket, &buffer_info, 1, NULL, &flags, &(operation_data->wsa_overlapped), NULL);
-						}
-						else
-						{
-							WSABUF buffer_info = {
-								.buf = operation_data->nickname + operation_data->received,
-								.len = operation_data->nickname_length - operation_data->received
-							};
-							WSARecv(connection_data->socket, &buffer_info, 1, NULL, &flags, &(operation_data->wsa_overlapped), NULL);
-						}
-						
-						break;
-					}
-					
-					case phase_getting_message_length:
-					{
-						//printf("message length: %i\n", operation_data->message_length);
-						
-						operation_data->phase = phase_getting_message;
-						
-						operation_data->received = 0;
-						
-						WSABUF buffer_info = {
-							.buf = operation_data->message,
-							.len = operation_data->message_length
-						};
-						WSARecv(connection_data->socket, &buffer_info, 1, NULL, &flags, &(operation_data->wsa_overlapped), NULL);
-						
-						break;
-					}
-					
-					case phase_getting_message:
-					{
-						operation_data->received += size;
-						
-						if ( operation_data->received == operation_data->message_length )
-						{
-							printf("%.*s wrote: %.*s\n", operation_data->nickname_length, operation_data->nickname, operation_data->message_length, operation_data->message);
-							
-							operation_data->phase = phase_getting_nickname_length;
-							
-							WSABUF buffer_info = {
-								.buf = &(operation_data->nickname_length),
-								.len = 1
-							};
-							WSARecv(connection_data->socket, &buffer_info, 1, NULL, &flags, &(operation_data->wsa_overlapped), NULL);
-						}
-						else
-						{
-							WSABUF buffer_info = {
-								.buf = operation_data->message + operation_data->received,
-								.len = operation_data->message_length - operation_data->received
-							};
-							WSARecv(connection_data->socket, &buffer_info, 1, NULL, &flags, &(operation_data->wsa_overlapped), NULL);
-						}
-						
-						break;
-					}
+					phase = phase_get_nickname;
+					break;
 				}
-			}
-		}
-		else
-		{
-			DWORD error_code = GetLastError();
-			if ( error_code == ERROR_ABANDONED_WAIT_0 )
-				return EXIT_SUCCESS;
-			else
-				//win_perror("couldn't retrieve completion packet from the completion port queue", error_code);
-				printf("couldn't retrieve completion packet from the completion port queue: %i\n", error_code);
+				else
+					return 0;
+			case phase_get_nickname:
+				if ( receive_all(sock, nickname, nickname_length) )
+				{
+					phase = phase_get_message_length;
+					break;
+				}
+				else
+					return 0;
+			case phase_get_message_length:
+				if ( recv(sock, &message_length, 1, 0) )
+				{
+					phase = phase_get_message;
+					break;
+				}
+				else
+					return 0;
+			case phase_get_message:
+				if ( receive_all(sock, message, message_length) )
+				{
+					printf("%.*s wrote: %.*s\n", nickname_length, nickname, message_length, message);
+					phase = phase_get_nickname_length;
+					break;
+				}
+				else
+					return 0;
 		}
 	}
 }
@@ -156,67 +97,38 @@ int client
 )
 {
 	int rv;
-	HANDLE completion_port;
-	
-	completion_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
-	if ( completion_port )
+	HANDLE thread_handle;
+	if ( thread_handle = CreateThread(NULL, 0, receive_thread, &sock, 0, NULL) )
 	{
-		HANDLE thread;
-		if ( thread = CreateThread(NULL, 0, worker_thread, completion_port, 0, NULL) )
+		for ( ; ; )
 		{
-			ConnectionData connection_data;
+			char message[256];
 			
-			CloseHandle(thread);
-			
-			connection_data.socket = sock;
-			
-			if ( CreateIoCompletionPort((HANDLE)sock, completion_port, (ULONG_PTR)&connection_data, 0) )
+			puts("Enter a message:");
+			fgets(message+1, sizeof(message)-1, stdin);
+			if ( message[1] == '\n' )
+				break;
+			else
 			{
-				OperationData operation_data = {0};
-				DWORD flags = 0;
-				
-				operation_data.phase = phase_getting_nickname_length;
-				
-				WSABUF buffer_info = {
-					.buf = &(operation_data.nickname_length),
-					.len = 1
-				};
-				/* Post initial recv - FIXME: Use ConnectEx */
-				if ( WSARecv(sock, &buffer_info, 1, NULL, &flags, &(operation_data.wsa_overlapped), NULL) == SOCKET_ERROR )
-				{
-					if ( WSAGetLastError() != ERROR_IO_PENDING )
-						printf("%d\n", WSAGetLastError());
-				}
-				
-				for ( ; ; )
-				{
-					char message[256];
-					
-					puts("Enter a message:");
-					fgets(message+1, sizeof(message)-1, stdin);
-					if ( message[1] == '\n' )
-						break;
-					else
-					{
-						size_t msg_len = strlen(message+1);
-						message[msg_len] = 0;
-						*message = msg_len-1;
-						send(sock, message, msg_len, 0);
-					}
-				}
+				size_t msg_len = strlen(message+1);
+				message[msg_len] = 0;
+				*message = msg_len-1;
+				send(sock, message, msg_len, 0);
 			}
 		}
-		
-		CloseHandle(completion_port);
 		
 		rv = 1;
 	}
 	else
-	{
 		rv = 0;
-	}
 	
 	closesocket(sock);
+	
+	if ( thread_handle )
+	{
+		WaitForSingleObject(thread_handle, INFINITE);
+		CloseHandle(thread_handle);
+	}
 	
 	return rv;
 }

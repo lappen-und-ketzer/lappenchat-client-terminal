@@ -83,9 +83,10 @@ receive_thread
 				if ( receive_all(sock, message, message_length) )
 				{
 					printf("%.*s wrote: %.*s\n", nickname_length, nickname, message_length, message);
-					if ( log_file )
+					if ( log_file ){
 						fprintf(log_file, "%.*s wrote: %.*s\n", nickname_length, nickname, message_length, message);
 						fflush(log_file);
+					}
 					
 					phase = phase_get_nickname_length;
 					break;

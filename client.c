@@ -49,6 +49,7 @@ receive_thread
 	char nickname[32];
 	unsigned char message_length = 0;
 	char message[256];
+	FILE * log_file = fopen("log.txt", "a");
 	
 	for ( ; ; )
 	{
@@ -69,7 +70,7 @@ receive_thread
 					break;
 				}
 				else
-					return 0;
+					goto exit_point;
 			case phase_get_message_length:
 				if ( recv(sock, &message_length, 1, 0) )
 				{
@@ -77,18 +78,26 @@ receive_thread
 					break;
 				}
 				else
-					return 0;
+					goto exit_point;
 			case phase_get_message:
 				if ( receive_all(sock, message, message_length) )
 				{
 					printf("%.*s wrote: %.*s\n", nickname_length, nickname, message_length, message);
+					if ( log_file )
+						fprintf(log_file, "%.*s wrote: %.*s\n", nickname_length, nickname, message_length, message);
+					
 					phase = phase_get_nickname_length;
 					break;
 				}
 				else
-					return 0;
+					goto exit_point;
 		}
 	}
+	
+	exit_point:
+	if ( log_file )
+		fclose(log_file);
+	return 0;
 }
 
 int client
